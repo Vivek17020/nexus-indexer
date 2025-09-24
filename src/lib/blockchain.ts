@@ -1,84 +1,87 @@
-// Blockchain integration for ZK proof submission and verification
+// Real Blockchain integration for ZK proof submission on Polygon zkEVM testnet
 import { ethers } from 'ethers';
 import contractDeployment from '@/contracts/deployment.json';
 import type { GroupProof } from '@/lib/groupProofs';
 
-// Mock NFT data for demonstration
-const mockNFTs = [
-  {
-    tokenId: '1',
-    name: 'ETH Denver 2025 Attendee',
-    description: 'Proof of attendance at ETH Denver 2025',
-    image: 'https://images.unsplash.com/photo-1516321497487-e288fb19713f?w=400&h=400&fit=crop',
-    eventId: 'eth-denver-2025',
-    mintedAt: new Date().toISOString()
+// Chain configuration for Polygon zkEVM testnet
+const POLYGON_ZKEVM_TESTNET = {
+  chainId: '0x5A2', // 1442 in hex
+  chainName: 'Polygon zkEVM Testnet',
+  nativeCurrency: {
+    name: 'ETH',
+    symbol: 'ETH',
+    decimals: 18,
   },
-  {
-    tokenId: '2', 
-    name: 'ZK Summit 11 Badge',
-    description: 'Verified participant at ZK Summit 11',
-    image: 'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=400&h=400&fit=crop',
-    eventId: 'zk-summit-11',
-    mintedAt: new Date().toISOString()
-  },
-  {
-    tokenId: '3',
-    name: 'Privacy Tech Meetup',
-    description: 'Active participant in Privacy Tech community',
-    image: 'https://images.unsplash.com/photo-1558655146-9f40138edfeb?w=400&h=400&fit=crop',
-    eventId: 'privacy-tech-meetup',
-    mintedAt: new Date().toISOString()
-  }
-];
+  rpcUrls: ['https://rpc.public.zkevm-test.net'],
+  blockExplorerUrls: ['https://testnet-zkevm.polygonscan.com/'],
+};
+
+interface TransactionStatus {
+  hash: string;
+  status: 'pending' | 'confirmed' | 'failed';
+  confirmations: number;
+  gasUsed?: string;
+  effectiveGasPrice?: string;
+  blockNumber?: number;
+}
 
 export class BlockchainManager {
   private static contract: ethers.Contract | null = null;
   private static signer: ethers.Signer | null = null;
   private static provider: ethers.BrowserProvider | null = null;
+  private static pendingTransactions: Map<string, TransactionStatus> = new Map();
 
   static async connectWallet(): Promise<boolean> {
     try {
       if (typeof window === 'undefined' || !window.ethereum) {
-        console.error('MetaMask not detected');
+        console.error('❌ MetaMask not detected');
         return false;
       }
 
+      console.log('🔌 Connecting to Polygon zkEVM testnet...');
+      
       // Create provider
       this.provider = new ethers.BrowserProvider(window.ethereum);
       
       // Request account access
       await window.ethereum.request({ method: 'eth_requestAccounts' });
       
-      // Get signer
-      this.signer = await this.provider.getSigner();
-      
-      // Switch to Polygon Mumbai testnet
+      // Switch to Polygon zkEVM testnet
       try {
         await window.ethereum.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x13881' }], // Mumbai testnet
+          params: [{ chainId: POLYGON_ZKEVM_TESTNET.chainId }],
         });
       } catch (switchError: any) {
         // Add the network if it doesn't exist
         if (switchError.code === 4902) {
+          console.log('➕ Adding Polygon zkEVM testnet to wallet...');
           await window.ethereum.request({
             method: 'wallet_addEthereumChain',
-            params: [{
-              chainId: '0x13881',
-              chainName: 'Polygon Mumbai',
-              nativeCurrency: {
-                name: 'MATIC',
-                symbol: 'MATIC',
-                decimals: 18,
-              },
-              rpcUrls: ['https://rpc-mumbai.maticvigil.com/'],
-              blockExplorerUrls: ['https://mumbai.polygonscan.com/'],
-            }],
+            params: [POLYGON_ZKEVM_TESTNET],
           });
+        } else {
+          throw switchError;
         }
       }
+      
+      // Get signer
+      this.signer = await this.provider.getSigner();
+      
+      // Verify we're on the correct network
+      const network = await this.provider.getNetwork();
+      if (Number(network.chainId) !== 1442) {
+        throw new Error(`Wrong network. Expected Polygon zkEVM testnet (1442), got ${network.chainId}`);
+      }
 
-      console.log('✅ Wallet connected successfully');
+      console.log('✅ Successfully connected to Polygon zkEVM testnet');
+      console.log('📍 Network:', network.name, 'Chain ID:', network.chainId);
+      
+      const address = await this.signer.getAddress();
+      const balance = await this.provider.getBalance(address);
+      console.log('👛 Address:', address);
+      console.log('💰 Balance:', ethers.formatEther(balance), 'ETH');
+      
       return true;
     } catch (error) {
       console.error('❌ Failed to connect wallet:', error);
@@ -135,30 +138,131 @@ export class BlockchainManager {
     return { signer: this.signer!, contract: this.contract };
   }
 
-  static async submitProofToBlockchain(eventId: string, proof: string | Uint8Array): Promise<{txHash: string} | null> {
+  static async submitProofToBlockchain(
+    eventId: string, 
+    proof: string | Uint8Array
+  ): Promise<{ txHash: string; status: TransactionStatus; nftTokenId?: string } | null> {
     try {
       const { signer, contract } = await this.getContractWithSigner();
       
-      // Convert proof to string if needed
-      const proofString = typeof proof === 'string' ? proof : 
-                         proof instanceof Uint8Array ? ethers.hexlify(proof) : proof;
+      // Convert proof to bytes format for the contract
+      let proofBytes: string;
+      if (typeof proof === 'string') {
+        // If it's a hex string, use as is, otherwise convert
+        proofBytes = proof.startsWith('0x') ? proof : ethers.hexlify(ethers.toUtf8Bytes(proof));
+      } else {
+        // Convert Uint8Array to hex string
+        proofBytes = ethers.hexlify(proof);
+      }
+      
+      console.log('📤 Submitting proof to Polygon zkEVM:', { 
+        eventId, 
+        proofLength: proofBytes.length,
+        contractAddress: await contract.getAddress()
+      });
 
-      console.log('📤 Submitting proof to blockchain:', { eventId, proof: proofString });
+      // Estimate gas first
+      const gasEstimate = await contract.submitProof.estimateGas(eventId, proofBytes);
+      const gasLimit = gasEstimate * 120n / 100n; // Add 20% buffer
+      
+      console.log('⛽ Gas estimate:', gasEstimate.toString());
 
-      // Submit proof to contract
-      const tx = await contract.submitProof(eventId, proofString);
-      console.log('⏳ Transaction submitted:', tx.hash);
+      // Submit proof to contract with gas limit
+      const tx = await contract.submitProof(eventId, proofBytes, {
+        gasLimit: gasLimit
+      });
+      
+      console.log('📋 Transaction submitted:', tx.hash);
+      console.log('🔍 Explorer:', `${contractDeployment.explorerUrl}/tx/${tx.hash}`);
+      
+      // Create transaction status
+      const status: TransactionStatus = {
+        hash: tx.hash,
+        status: 'pending',
+        confirmations: 0
+      };
+      
+      this.pendingTransactions.set(tx.hash, status);
+      
+      // Start monitoring transaction
+      this.monitorTransaction(tx.hash);
+      
+      return {
+        txHash: tx.hash,
+        status,
+        nftTokenId: undefined // Will be updated when transaction confirms
+      };
+    } catch (error: any) {
+      console.error('❌ Failed to submit proof to blockchain:', error);
+      
+      // Parse specific error messages
+      if (error.code === 'INSUFFICIENT_FUNDS') {
+        throw new Error('Insufficient ETH balance for transaction fees');
+      } else if (error.code === 'USER_REJECTED') {
+        throw new Error('Transaction was rejected by user');
+      } else if (error.message?.includes('Proof already submitted')) {
+        throw new Error('This proof has already been submitted');
+      }
+      
+      throw error;
+    }
+  }
+
+  // Monitor transaction status
+  static async monitorTransaction(txHash: string): Promise<void> {
+    try {
+      if (!this.provider) return;
+      
+      const tx = await this.provider.getTransaction(txHash);
+      if (!tx) return;
       
       // Wait for confirmation
       const receipt = await tx.wait();
-      console.log('✅ Proof submitted successfully:', receipt.hash);
       
-      return {
-        txHash: tx.hash
-      };
+      if (receipt) {
+        const status: TransactionStatus = {
+          hash: txHash,
+          status: receipt.status === 1 ? 'confirmed' : 'failed',
+          confirmations: await this.provider.getBlockNumber() - receipt.blockNumber + 1,
+          gasUsed: receipt.gasUsed.toString(),
+          effectiveGasPrice: receipt.gasPrice?.toString(),
+          blockNumber: receipt.blockNumber
+        };
+        
+        this.pendingTransactions.set(txHash, status);
+        
+        if (receipt.status === 1) {
+          console.log('✅ Transaction confirmed:', txHash);
+          console.log('📊 Gas used:', receipt.gasUsed.toString());
+          
+          // Parse events for NFT minting
+          if (this.contract) {
+            const events = await this.contract.queryFilter(
+              this.contract.filters.NFTMinted(),
+              receipt.blockNumber,
+              receipt.blockNumber
+            );
+            
+            for (const event of events) {
+              if (event.transactionHash === txHash) {
+                console.log('🎁 NFT minted! Token ID:', (event as any).args?.tokenId?.toString());
+              }
+            }
+          }
+        } else {
+          console.error('❌ Transaction failed:', txHash);
+        }
+      }
     } catch (error) {
-      console.error('❌ Failed to submit proof to blockchain:', error);
-      return null;
+      console.error('Failed to monitor transaction:', error);
+      
+      const status: TransactionStatus = {
+        hash: txHash,
+        status: 'failed',
+        confirmations: 0
+      };
+      
+      this.pendingTransactions.set(txHash, status);
     }
   }
 
@@ -169,28 +273,62 @@ export class BlockchainManager {
       // Create a combined eventId for group proof
       const groupEventId = `${groupProof.eventId}_group_${groupProof.participants.length}`;
       
-      // Use merkle root as proof string for group proofs
-      const proofString = groupProof.merkleRoot;
+      // Convert merkle root to bytes format
+      const proofBytes = ethers.hexlify(ethers.toUtf8Bytes(groupProof.merkleRoot));
       
-      console.log('Submitting group proof to blockchain:', {
+      console.log('📤 Submitting group proof to blockchain:', {
         eventId: groupEventId,
-        proof: proofString,
-        participants: groupProof.participants.length
+        participants: groupProof.participants.length,
+        merkleRoot: groupProof.merkleRoot
       });
 
-      // Submit group proof to contract
-      const tx = await contract.submitProof(groupEventId, proofString);
-      const receipt = await tx.wait();
-      
-      console.log('Group proof submitted successfully:', receipt.hash);
+      const tx = await contract.submitProof(groupEventId, proofBytes);
+      console.log('📋 Group proof transaction:', tx.hash);
       
       return {
-        txHash: receipt.hash,
-        proofId: receipt.hash // Using tx hash as proof ID for simplicity
+        txHash: tx.hash,
+        proofId: tx.hash
       };
     } catch (error) {
-      console.error('Failed to submit group proof to blockchain:', error);
+      console.error('❌ Failed to submit group proof:', error);
       return null;
+    }
+  }
+
+  static async getUserNFTs(userAddress: string): Promise<any[]> {
+    try {
+      const { contract } = await this.getContractWithSigner();
+      
+      // Get user's NFT balance
+      const balance = await contract.balanceOf(userAddress);
+      const balanceNumber = parseInt(balance.toString());
+      
+      console.log(`👛 User has ${balanceNumber} NFTs`);
+      
+      const nfts = [];
+      
+      // Get each NFT owned by user
+      for (let i = 0; i < balanceNumber; i++) {
+        try {
+          const tokenId = await contract.tokenOfOwnerByIndex(userAddress, i);
+          const tokenURI = await contract.tokenURI(tokenId);
+          
+          nfts.push({
+            tokenId: tokenId.toString(),
+            tokenURI,
+            name: `ZK Proof NFT #${tokenId}`,
+            description: 'Proof of attendance NFT',
+            image: tokenURI // In production, this would parse metadata JSON
+          });
+        } catch (error) {
+          console.warn(`Failed to get NFT at index ${i}:`, error);
+        }
+      }
+      
+      return nfts;
+    } catch (error) {
+      console.error('Failed to get user NFTs:', error);
+      return [];
     }
   }
 
@@ -209,22 +347,9 @@ export class BlockchainManager {
     try {
       const { contract } = await this.getContractWithSigner();
       const proofs = await contract.getUserProofs(userAddress);
-      return proofs;
+      return proofs.map((proof: any) => proof.toString());
     } catch (error) {
       console.error('Failed to get user proofs:', error);
-      return [];
-    }
-  }
-
-  static async getUserNFTs(userAddress: string): Promise<any[]> {
-    try {
-      // Mock implementation - in real app would query NFT contract or indexer
-      const userProofs = await this.getUserProofs(userAddress);
-      
-      // Return mock NFTs based on number of proofs
-      return mockNFTs.slice(0, Math.min(userProofs.length, mockNFTs.length));
-    } catch (error) {
-      console.error('Failed to get user NFTs:', error);
       return [];
     }
   }
@@ -235,12 +360,25 @@ export class BlockchainManager {
 
   static async getUserNFTCount(userAddress: string): Promise<number> {
     try {
-      const nfts = await this.getUserNFTs(userAddress);
-      return nfts.length;
+      const { contract } = await this.getContractWithSigner();
+      const balance = await contract.balanceOf(userAddress);
+      return parseInt(balance.toString());
     } catch (error) {
       console.error('Failed to get user NFT count:', error);
       return 0;
     }
+  }
+
+  static getTransactionStatus(txHash: string): TransactionStatus | null {
+    return this.pendingTransactions.get(txHash) || null;
+  }
+
+  static getAllPendingTransactions(): TransactionStatus[] {
+    return Array.from(this.pendingTransactions.values()).filter(tx => tx.status === 'pending');
+  }
+
+  static clearTransactionHistory(): void {
+    this.pendingTransactions.clear();
   }
 }
 

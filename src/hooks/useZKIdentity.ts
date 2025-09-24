@@ -235,7 +235,7 @@ export function useZKIdentity() {
     
     try {
       toast({
-        title: "Submitting to Blockchain ⛓️",
+        title: "Submitting to Polygon zkEVM ⛓️",
         description: "Publishing your proof on-chain...",
       });
 
@@ -245,7 +245,12 @@ export function useZKIdentity() {
       );
 
       if (result) {
-        // Show reward screen instead of just toast
+        toast({
+          title: "Proof Submitted! 🎉",
+          description: `Transaction: ${result.txHash.slice(0, 10)}...`,
+        });
+
+        // Show reward screen with transaction info
         setRewardData({
           eventName: credential.eventName,
           nftImage: credential.metadata?.image,
@@ -257,11 +262,21 @@ export function useZKIdentity() {
       } else {
         throw new Error('Failed to submit to blockchain');
       }
-    } catch (error) {
+    } catch (error: any) {
+      let errorMessage = "Please try again or check your wallet";
+      
+      if (error.message?.includes('Insufficient ETH')) {
+        errorMessage = "Insufficient ETH for gas fees. Get testnet ETH from faucet.";
+      } else if (error.message?.includes('rejected')) {
+        errorMessage = "Transaction was rejected";
+      } else if (error.message?.includes('already submitted')) {
+        errorMessage = "This proof has already been submitted";
+      }
+
       toast({
         variant: "destructive",
         title: "Blockchain Submission Failed",
-        description: "Please try again or check your wallet",
+        description: errorMessage,
       });
       throw error;
     } finally {
@@ -286,10 +301,15 @@ export function useZKIdentity() {
       const result = await BlockchainManager.submitGroupProofToBlockchain(groupProof);
 
       if (result) {
+        toast({
+          title: "Group Proof Submitted! 🎉",
+          description: `Transaction: ${result.txHash.slice(0, 10)}...`,
+        });
+
         // Show reward screen for group proof
         setRewardData({
           eventName: `${groupProof.eventName} (Group)`,
-          nftImage: undefined, // Group proofs might have different NFT images
+          nftImage: undefined,
           txHash: result.txHash
         });
         setShowRewardScreen(true);
@@ -298,11 +318,19 @@ export function useZKIdentity() {
       } else {
         throw new Error('Failed to submit group proof to blockchain');
       }
-    } catch (error) {
+    } catch (error: any) {
+      let errorMessage = "Please try again or check your wallet";
+      
+      if (error.message?.includes('Insufficient ETH')) {
+        errorMessage = "Insufficient ETH for gas fees";
+      } else if (error.message?.includes('rejected')) {
+        errorMessage = "Transaction was rejected";
+      }
+
       toast({
         variant: "destructive",
         title: "Group Proof Submission Failed",
-        description: "Please try again or check your wallet",
+        description: errorMessage,
       });
       throw error;
     } finally {
