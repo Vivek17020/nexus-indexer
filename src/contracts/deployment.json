@@ -1,0 +1,18 @@
+{
+  "contractAddress": "0x742B0b2f9BfCBa6d00B1e8b0a2cC8Dd34567890a",
+  "network": "Polygon Mumbai",
+  "chainId": 80001,
+  "explorerUrl": "https://mumbai.polygonscan.com",
+  "abi": [
+    "function submitProof(string eventId, string proofString) external returns (bytes32)",
+    "function verifyProof(bytes32 proofId, bool isValid) external",
+    "function getProof(bytes32 proofId) external view returns (string, bytes32, address, uint256, bool)",
+    "function getUserProofs(address user) external view returns (bytes32[])",
+    "function getEventProofs(string eventId) external view returns (bytes32[])",
+    "function getTotalProofs() external view returns (uint256)",
+    "event ProofSubmitted(bytes32 indexed proofId, string indexed eventId, address indexed submitter, bytes32 commitmentHash, uint256 timestamp)",
+    "event ProofVerified(bytes32 indexed proofId, bool verified)"
+  ],
+  "deployedAt": "2025-01-14T10:30:00.000Z",
+  "deployer": "0x1234567890123456789012345678901234567890"
+}
