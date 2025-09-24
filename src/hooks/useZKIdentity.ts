@@ -22,16 +22,29 @@ export function useZKIdentity() {
 
   useEffect(() => {
     // Load identity, credentials, and co-presence proofs on mount
-    const loadedIdentity = ZKIdentityManager.getOrCreateIdentity();
-    const loadedCredentials = ZKIdentityManager.getStoredCredentials();
-    const loadedCoPresenceProofs = ZKIdentityManager.getStoredCoPresenceProofs();
-    
-    setIdentity(loadedIdentity);
-    setCredentials(loadedCredentials);
-    setCoPresenceProofs(loadedCoPresenceProofs);
+    const initializeData = async () => {
+      try {
+        const loadedIdentity = await ZKIdentityManager.getOrCreateIdentity();
+        const loadedCredentials = ZKIdentityManager.getStoredCredentials();
+        const loadedCoPresenceProofs = ZKIdentityManager.getStoredCoPresenceProofs();
+        
+        setIdentity(loadedIdentity);
+        setCredentials(loadedCredentials);
+        setCoPresenceProofs(loadedCoPresenceProofs);
 
-    // Check wallet connection
-    checkWalletConnection();
+        // Check wallet connection
+        checkWalletConnection();
+      } catch (error) {
+        console.error('Failed to initialize ZK identity data:', error);
+        toast({
+          variant: "destructive",
+          title: "Initialization Failed",
+          description: "Failed to load ZK identity. Some features may not work properly.",
+        });
+      }
+    };
+
+    initializeData();
   }, []);
 
   const loadUserNFTs = async () => {
@@ -348,9 +361,10 @@ export function useZKIdentity() {
     return ZKIdentityManager.getIdentityStats();
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     ZKIdentityManager.clearAll();
-    setIdentity(ZKIdentityManager.getOrCreateIdentity());
+    const newIdentity = await ZKIdentityManager.getOrCreateIdentity();
+    setIdentity(newIdentity);
     setCredentials([]);
     setCoPresenceProofs([]);
     

@@ -1,11 +1,14 @@
-// ZK Identity Manager - Mock implementation for web, can be extended for native mobile with MoPro SDK
+// ZK Identity Manager - Integrated with MoPro SDK for real ZK proof generation
+
+import { MoProIntegration, type MoProCredential } from './moproIntegration';
+import { SecureWallet } from './secureWallet';
 
 interface ZKCredential {
   id: string;
   eventId: string;
   eventName: string;
   timestamp: number;
-  proof: string;
+  proof: string | Uint8Array;
   publicSignals: string[];
   verificationKey: string;
   blockchainStatus?: "Valid" | "Submitted" | "Confirmed";
@@ -14,6 +17,7 @@ interface ZKCredential {
     duration?: number;
     attendeeCount?: number;
     image?: string;
+    type?: string;
   };
 }
 
@@ -54,55 +58,106 @@ class ZKIdentityManager {
   private static readonly CREDENTIALS_KEY = 'zk-credentials';
   private static readonly COPRESENCE_PROOFS_KEY = 'zk-copresence-proofs';
 
-  // Generate a mock ZK identity for demonstration
-  static generateIdentity(): ZKIdentity {
-    const privateKey = this.generateRandomHex(32);
-    const publicKey = this.generateRandomHex(32);
-    const identityCommitment = this.generateRandomHex(32);
-    const nullifierHash = this.generateRandomHex(32);
+  // Generate ZK identity using MoPro or fallback to mock
+  static async generateIdentity(): Promise<ZKIdentity> {
+    try {
+      // Try to use MoPro first
+      if (MoProIntegration.isMoProAvailable()) {
+        const moProIdentity = await MoProIntegration.generateIdentity();
+        if (moProIdentity) {
+          return {
+            identityCommitment: moProIdentity.commitment,
+            nullifierHash: moProIdentity.nullifier,
+            privateKey: moProIdentity.privateKey,
+            publicKey: moProIdentity.publicKey,
+            credentials: []
+          };
+        }
+      }
 
-    return {
-      identityCommitment,
-      nullifierHash,
-      privateKey,
-      publicKey,
-      credentials: []
-    };
+      // Fallback to mock implementation
+      console.warn('MoPro not available, using mock identity generation');
+      const privateKey = this.generateRandomHex(32);
+      const publicKey = this.generateRandomHex(32);
+      const identityCommitment = this.generateRandomHex(32);
+      const nullifierHash = this.generateRandomHex(32);
+
+      return {
+        identityCommitment,
+        nullifierHash,
+        privateKey,
+        publicKey,
+        credentials: []
+      };
+    } catch (error) {
+      console.error('Failed to generate identity:', error);
+      throw error;
+    }
   }
 
-  // Generate ZK proof for event attendance
+  // Generate ZK proof for event attendance using MoPro
   static async generateEventCredential(
     eventId: string, 
     eventName: string, 
     metadata: ZKCredential['metadata'] = {}
   ): Promise<ZKCredential> {
-    // Simulate proof generation delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {
+      // Try to use MoPro first
+      if (MoProIntegration.isMoProAvailable()) {
+        const moProCredential = await MoProIntegration.generateEventCredential(
+          eventId, 
+          eventName, 
+          metadata.location
+        );
 
-    // Mock proof generation - in reality this would use MoPro SDK
-    const proof = this.generateRandomHex(256);
-    const publicSignals = [
-      this.generateRandomHex(32), // nullifier hash
-      this.generateRandomHex(32), // event hash
-      this.generateRandomHex(32)  // timestamp hash
-    ];
-    const verificationKey = this.generateRandomHex(128);
+        if (moProCredential) {
+          const credential: ZKCredential = {
+            id: moProCredential.id,
+            eventId,
+            eventName,
+            timestamp: Date.now(),
+            proof: moProCredential.proof,
+            publicSignals: moProCredential.publicSignals,
+            verificationKey: moProCredential.verificationKey,
+            metadata: { ...metadata, type: 'event_attendance' }
+          };
 
-    const credential: ZKCredential = {
-      id: this.generateRandomHex(16),
-      eventId,
-      eventName,
-      timestamp: Date.now(),
-      proof,
-      publicSignals,
-      verificationKey,
-      metadata
-    };
+          // Store in secure wallet
+          SecureWallet.addCredential(moProCredential);
+          this.storeCredential(credential);
+          return credential;
+        }
+      }
 
-    // Store credential locally
-    this.storeCredential(credential);
+      // Fallback to mock implementation
+      console.warn('MoPro not available, using mock credential generation');
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-    return credential;
+      const proof = this.generateRandomHex(256);
+      const publicSignals = [
+        this.generateRandomHex(32), // nullifier hash
+        this.generateRandomHex(32), // event hash
+        this.generateRandomHex(32)  // timestamp hash
+      ];
+      const verificationKey = this.generateRandomHex(128);
+
+      const credential: ZKCredential = {
+        id: this.generateRandomHex(16),
+        eventId,
+        eventName,
+        timestamp: Date.now(),
+        proof,
+        publicSignals,
+        verificationKey,
+        metadata: { ...metadata, type: 'mock' }
+      };
+
+      this.storeCredential(credential);
+      return credential;
+    } catch (error) {
+      console.error('Failed to generate event credential:', error);
+      throw error;
+    }
   }
 
   // Generate ZK proof for co-presence
@@ -152,29 +207,50 @@ class ZKIdentityManager {
     return proof;
   }
 
-  // Verify a ZK credential
+  // Verify a ZK credential using MoPro
   static async verifyCredential(credential: ZKCredential): Promise<boolean> {
-    // Simulate verification delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Mock verification - in reality this would verify the actual proof
-    return credential.proof.length > 0 && credential.publicSignals.length === 3;
+    try {
+      // Try to use MoPro for verification
+      if (MoProIntegration.isMoProAvailable() && credential.metadata?.type !== 'mock') {
+        const moProCredential: MoProCredential = {
+          id: credential.id,
+          proof: credential.proof as Uint8Array,
+          publicSignals: credential.publicSignals,
+          verificationKey: credential.verificationKey,
+          metadata: credential.metadata
+        };
+
+        return await MoProIntegration.verifyCredential(moProCredential);
+      }
+
+      // Fallback to mock verification
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return credential.proof.length > 0 && credential.publicSignals.length === 3;
+    } catch (error) {
+      console.error('Failed to verify credential:', error);
+      return false;
+    }
   }
 
-  // Get or create ZK identity
-  static getOrCreateIdentity(): ZKIdentity {
-    const stored = localStorage.getItem(this.STORAGE_KEY);
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch (e) {
-        console.warn('Failed to parse stored identity, creating new one');
+  // Get or create ZK identity (async for MoPro integration)
+  static async getOrCreateIdentity(): Promise<ZKIdentity> {
+    try {
+      const stored = localStorage.getItem(this.STORAGE_KEY);
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch (e) {
+          console.warn('Failed to parse stored identity, creating new one');
+        }
       }
-    }
 
-    const identity = this.generateIdentity();
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(identity));
-    return identity;
+      const identity = await this.generateIdentity();
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(identity));
+      return identity;
+    } catch (error) {
+      console.error('Failed to get or create identity:', error);
+      throw error;
+    }
   }
 
   // Store a credential

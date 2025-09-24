@@ -135,10 +135,14 @@ export class BlockchainManager {
     return { signer: this.signer!, contract: this.contract };
   }
 
-  static async submitProofToBlockchain(eventId: string, proofString: string): Promise<{txHash: string} | null> {
+  static async submitProofToBlockchain(eventId: string, proof: string | Uint8Array): Promise<{txHash: string} | null> {
     try {
       const { signer, contract } = await this.getContractWithSigner();
       
+      // Convert proof to string if needed
+      const proofString = typeof proof === 'string' ? proof : 
+                         proof instanceof Uint8Array ? ethers.hexlify(proof) : proof;
+
       console.log('📤 Submitting proof to blockchain:', { eventId, proof: proofString });
 
       // Submit proof to contract
